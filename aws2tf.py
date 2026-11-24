@@ -470,7 +470,7 @@ def setup_environment_and_context(args):
     # Setup profile - respect AWS_PROFILE env var when -p is not passed
     if args.profile:
         context.profile = args.profile
-    elif os.environ.get('AWS_PROFILE'):
+    elif not context.environment_credentials and os.environ.get('AWS_PROFILE'):
         context.profile = os.environ['AWS_PROFILE']
     
     # Detect and validate AWS credentials

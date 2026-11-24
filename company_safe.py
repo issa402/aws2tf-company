@@ -25,6 +25,7 @@ from typing import Any, Mapping
 ACCOUNT_RE = re.compile(r"^\d{12}$")
 REGION_RE = re.compile(r"^[a-z]{2}-[a-z]+-\d{1,2}$")
 RESOURCE_TYPE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+EVALUATED_UPSTREAM_COMMIT = "0592fc501ba1a60d77c74409e2799414bbe15011"
 
 # These paths can retrieve secret values, instance user data, or deployment
 # packages. They are outside the network-migration evaluation scope.
@@ -229,6 +230,33 @@ def get_git_commit(repo_root: Path, ref: str) -> str:
     return result.stdout.strip()
 
 
+def get_upstream_base_commit(repo_root: Path) -> str:
+    """Resolve upstream provenance even in a fresh private-repository clone."""
+    for ref in ("upstream/master", "origin/master", EVALUATED_UPSTREAM_COMMIT):
+        try:
+            return get_git_commit(repo_root, ref)
+        except subprocess.CalledProcessError:
+            continue
+    raise SafetyError("Evaluated upstream commit is missing from Git history")
+
+
+def build_run_environment(
+    *, use_environment_credentials: bool, environment: Mapping[str, str]
+) -> dict[str, str]:
+    """Build a child environment with one unambiguous AWS credential source."""
+    run_environment = {
+        **environment,
+        "AWS2TF_METADATA_ONLY": "1",
+        "AWS2TF_USE_ENVIRONMENT_CREDENTIALS": (
+            "1" if use_environment_credentials else "0"
+        ),
+    }
+    if use_environment_credentials:
+        run_environment.pop("AWS_PROFILE", None)
+        run_environment.pop("AWS_DEFAULT_PROFILE", None)
+    return run_environment
+
+
 def get_worktree_provenance(repo_root: Path) -> dict[str, Any]:
     """Record whether the checkout differs from the named fork commit."""
     status = subprocess.run(
@@ -306,10 +334,7 @@ def main(argv: list[str] | None = None) -> int:
     manifest_path = repo_root / "company-runs" / f"{timestamp}.json"
     fork_commit = get_git_commit(repo_root, "HEAD")
     worktree_provenance = get_worktree_provenance(repo_root)
-    try:
-        upstream_base_commit = get_git_commit(repo_root, "upstream/master")
-    except subprocess.CalledProcessError:
-        upstream_base_commit = get_git_commit(repo_root, "origin/master")
+    upstream_base_commit = get_upstream_base_commit(repo_root)
     write_run_manifest(
         manifest_path,
         {
@@ -343,13 +368,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         return 0
 
-    run_environment = {
-        **os.environ,
-        "AWS2TF_METADATA_ONLY": "1",
-        "AWS2TF_USE_ENVIRONMENT_CREDENTIALS": (
-            "1" if args.use_environment_credentials else "0"
-        ),
-    }
+    run_environment = build_run_environment(
+        use_environment_credentials=args.use_environment_credentials,
+        environment=os.environ,
+    )
     previous_umask = os.umask(0o077)
     try:
         return subprocess.run(

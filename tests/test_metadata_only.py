@@ -1,4 +1,6 @@
 import sys
+import os
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -7,6 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "code"))
 
 import context
+import cmd_runner
 from fixtf_aws_resources import (
     fixtf_autoscaling,
     fixtf_ec2,
@@ -20,11 +23,15 @@ class MetadataOnlyTests(unittest.TestCase):
     def setUp(self):
         self.previous = context.metadata_only
         self.previous_environment_credentials = context.environment_credentials
+        self.previous_profile = context.profile
+        self.previous_merge = context.merge
         context.metadata_only = True
 
     def tearDown(self):
         context.metadata_only = self.previous
         context.environment_credentials = self.previous_environment_credentials
+        context.profile = self.previous_profile
+        context.merge = self.previous_merge
 
     @patch("get_aws_resources.aws_lambda.boto3.client")
     @patch("get_aws_resources.aws_lambda.requests.get")
@@ -118,6 +125,26 @@ class MetadataOnlyTests(unittest.TestCase):
         context.profile = "network-readonly"
 
         self.assertEqual(context.active_profile(), "network-readonly")
+
+    @patch("cmd_runner.rc")
+    def test_generated_provider_omits_conflicting_profile_in_environment_mode(self, rc):
+        context.environment_credentials = True
+        context.profile = "wrong-account"
+        context.merge = True
+        original_cwd = Path.cwd()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                Path("imported").mkdir()
+                cmd_runner.aws_tf("us-east-1", Mock())
+                provider = Path("provider.tf").read_text(encoding="utf-8")
+            finally:
+                os.chdir(original_cwd)
+
+        self.assertNotIn("profile", provider)
+        self.assertNotIn("shared_credentials_files", provider)
+        rc.assert_called_once_with("cp provider.tf imported/provider.tf")
 
     @patch("fixtf_aws_resources.fixtf_glue.common.rc")
     def test_glue_script_is_not_downloaded(self, rc):

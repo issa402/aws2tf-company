@@ -15,6 +15,11 @@ The wrapper performs live discovery and Terraform planning but never applies
 the import plan. A full inventory can read sensitive configuration even with a
 read-only AWS identity, so generated output must be treated as sensitive.
 
+> **Company accounts must use `company_safe.py`.** Do not follow the upstream
+> quickstart below by running `aws2tf.py` directly: a normal upstream run can
+> reach Terraform import apply. The company wrapper always forces validation-only
+> execution and verifies the expected account first.
+
 ----
 
 ## Description

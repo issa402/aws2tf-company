@@ -155,9 +155,11 @@ def aws_tf(region, args):
       f3.write('}\n')
       f3.write('provider "aws" {\n')
       f3.write('  region                   = "' + region + '"\n')
-      if context.profile != "default":
-         f3.write('  profile                  = "' + context.profile + '"\n')
-      f3.write('  shared_credentials_files = ["~/.aws/credentials"]\n')
+      active_profile = context.active_profile()
+      if active_profile is not None and active_profile != "default":
+         f3.write('  profile                  = "' + active_profile + '"\n')
+      if not context.environment_credentials:
+         f3.write('  shared_credentials_files = ["~/.aws/credentials"]\n')
       f3.write('}\n')
 
    com = "cp provider.tf imported/provider.tf"
