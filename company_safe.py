@@ -343,7 +343,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         return 0
 
-    run_environment = {**os.environ, "AWS2TF_METADATA_ONLY": "1"}
+    run_environment = {
+        **os.environ,
+        "AWS2TF_METADATA_ONLY": "1",
+        "AWS2TF_USE_ENVIRONMENT_CREDENTIALS": (
+            "1" if args.use_environment_credentials else "0"
+        ),
+    }
     previous_umask = os.umask(0o077)
     try:
         return subprocess.run(

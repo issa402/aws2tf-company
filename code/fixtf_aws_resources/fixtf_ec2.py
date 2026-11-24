@@ -172,7 +172,8 @@ def aws_instance(t1, tt1, tt2, flag1, flag2):
 			if context.metadata_only:
 				return 1, t1, flag1, flag2
 			inid = flag2.split("__")[1]
-			session = boto3.Session(region_name=context.region, profile_name=context.profile)
+			profile = None if context.environment_credentials else context.profile
+			session = boto3.Session(region_name=context.region, profile_name=profile)
 			client = session.client("ec2")
 			resp = client.describe_instance_attribute(Attribute="userData", InstanceId=inid)
 			try:
