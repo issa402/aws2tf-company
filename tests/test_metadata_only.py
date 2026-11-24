@@ -107,6 +107,18 @@ class MetadataOnlyTests(unittest.TestCase):
         self.assertTrue(result)
         session.assert_called_once_with(region_name="us-east-1", profile_name=None)
 
+    def test_active_profile_is_none_for_environment_credentials(self):
+        context.environment_credentials = True
+        context.profile = "default"
+
+        self.assertIsNone(context.active_profile())
+
+    def test_active_profile_preserves_named_profile(self):
+        context.environment_credentials = False
+        context.profile = "network-readonly"
+
+        self.assertEqual(context.active_profile(), "network-readonly")
+
     @patch("fixtf_aws_resources.fixtf_glue.common.rc")
     def test_glue_script_is_not_downloaded(self, rc):
         fixtf_glue.aws_glue_job(
