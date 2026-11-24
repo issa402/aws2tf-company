@@ -99,6 +99,34 @@ class CompanySafeWrapperTests(unittest.TestCase):
         self.assertEqual(environment["AWS_ACCESS_KEY_ID"], "ASIAEXAMPLE")
         self.assertEqual(environment["AWS2TF_USE_ENVIRONMENT_CREDENTIALS"], "1")
 
+    def test_named_profile_mode_removes_conflicting_environment_credentials(self):
+        environment = build_run_environment(
+            use_environment_credentials=False,
+            environment={
+                "AWS_ACCESS_KEY_ID": "ASIAWRONG",
+                "AWS_SECRET_ACCESS_KEY": "wrong-secret",
+                "AWS_SESSION_TOKEN": "wrong-token",
+                "AWS_SECURITY_TOKEN": "legacy-token",
+                "AWS_ROLE_ARN": "arn:aws:iam::999900001111:role/wrong",
+                "AWS_WEB_IDENTITY_TOKEN_FILE": "/tmp/wrong-token",
+                "AWS_PROFILE": "wrong-profile",
+                "PATH": "/usr/bin",
+            },
+        )
+
+        for key in (
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+            "AWS_SECURITY_TOKEN",
+            "AWS_ROLE_ARN",
+            "AWS_WEB_IDENTITY_TOKEN_FILE",
+            "AWS_PROFILE",
+        ):
+            self.assertNotIn(key, environment)
+        self.assertEqual(environment["PATH"], "/usr/bin")
+        self.assertEqual(environment["AWS2TF_USE_ENVIRONMENT_CREDENTIALS"], "0")
+
     def test_implicit_unrestricted_scan_is_rejected(self):
         for resource_type in ("", "all", "stack"):
             with self.subTest(resource_type=resource_type):
@@ -223,7 +251,7 @@ class CompanySafeWrapperTests(unittest.TestCase):
     def test_get_actual_account_uses_argument_list(self, run):
         run.return_value = Mock(stdout='{"Account":"111122223333"}')
 
-        account = get_actual_account("network-readonly")
+        account = get_actual_account("network-readonly", {"PATH": "/usr/bin"})
 
         self.assertEqual(account, "111122223333")
         self.assertEqual(
@@ -238,17 +266,21 @@ class CompanySafeWrapperTests(unittest.TestCase):
                 "json",
             ],
         )
+        self.assertEqual(run.call_args.kwargs["env"], {"PATH": "/usr/bin"})
 
     @patch("company_safe.subprocess.run")
     def test_get_actual_account_uses_environment_chain_without_profile(self, run):
         run.return_value = Mock(stdout='{"Account":"111122223333"}')
 
-        account = get_actual_account(None)
+        account = get_actual_account(None, {"AWS_ACCESS_KEY_ID": "ASIAEXAMPLE"})
 
         self.assertEqual(account, "111122223333")
         self.assertEqual(
             run.call_args.args[0],
             ["aws", "sts", "get-caller-identity", "--output", "json"],
+        )
+        self.assertEqual(
+            run.call_args.kwargs["env"], {"AWS_ACCESS_KEY_ID": "ASIAEXAMPLE"}
         )
 
     @patch("company_safe.write_run_manifest")
