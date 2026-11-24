@@ -355,6 +355,9 @@ class CompanySafeWrapperTests(unittest.TestCase):
         validate_credentials.assert_called_once()
         account.assert_called_once_with(None)
         self.assertNotIn("--profile", run.call_args.args[0])
+        self.assertEqual(
+            run.call_args.kwargs["env"]["AWS2TF_USE_ENVIRONMENT_CREDENTIALS"], "1"
+        )
         self.assertEqual(write_manifest.call_args.args[1]["credential_source"], "environment")
 
     @patch("company_safe.get_actual_account", return_value="999900001111")

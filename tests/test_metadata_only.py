@@ -13,16 +13,18 @@ from fixtf_aws_resources import (
     fixtf_glue,
     fixtf_ssm,
 )
-from get_aws_resources import aws_lambda, aws_secretsmanager
+from get_aws_resources import aws_ec2, aws_lambda, aws_secretsmanager
 
 
 class MetadataOnlyTests(unittest.TestCase):
     def setUp(self):
         self.previous = context.metadata_only
+        self.previous_environment_credentials = context.environment_credentials
         context.metadata_only = True
 
     def tearDown(self):
         context.metadata_only = self.previous
+        context.environment_credentials = self.previous_environment_credentials
 
     @patch("get_aws_resources.aws_lambda.boto3.client")
     @patch("get_aws_resources.aws_lambda.requests.get")
@@ -85,6 +87,25 @@ class MetadataOnlyTests(unittest.TestCase):
         self.assertIn('value = ""', rendered)
         self.assertIn("ignore_changes = [value]", rendered)
         client.assert_not_called()
+
+    @patch("get_aws_resources.aws_ec2.boto3.Session")
+    def test_instance_discovery_uses_environment_credential_chain(self, session):
+        context.environment_credentials = True
+        context.region = "us-east-1"
+        session.return_value.client.return_value.get_paginator.return_value.paginate.return_value = []
+
+        result = aws_ec2.get_aws_instance(
+            "aws_instance",
+            None,
+            "ec2",
+            "describe_instances",
+            "Reservations",
+            "InstanceId",
+            "",
+        )
+
+        self.assertTrue(result)
+        session.assert_called_once_with(region_name="us-east-1", profile_name=None)
 
     @patch("fixtf_aws_resources.fixtf_glue.common.rc")
     def test_glue_script_is_not_downloaded(self, rc):
