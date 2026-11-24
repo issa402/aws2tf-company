@@ -18,6 +18,7 @@ to-aws-samples.sh
 test*
 !tests/
 !tests/**
+tests/terraform-fixtures/**/.terraform/
 .venv/
 company-runs/
 .tools/
