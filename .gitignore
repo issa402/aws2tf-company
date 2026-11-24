@@ -16,6 +16,9 @@ setup-local-git.sh
 to-aws-samples.sh
 *.xlsx
 test*
+!tests/
+!tests/**
+.venv/
 *.new
 *.sav
 *.zip
