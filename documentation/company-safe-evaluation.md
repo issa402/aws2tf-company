@@ -38,8 +38,8 @@ the same fixes.
 - requires an explicit profile, Region, and resource type;
 - verifies the active account through STS before starting generation;
 - rejects unrestricted `all`, `stack`, and broad `ec2` scans;
-- rejects resource types that can copy secrets, Lambda packages, EC2 user data,
-  or launch-configuration user data to local disk;
+- uses a positive networking allowlist, so aliases or direct resource types
+  outside the approved VPC/TGW/RAM/firewall/DNS/networking families fail closed;
 - always adds upstream `--validate`, stopping before Terraform import apply;
 - never adds `--accept`;
 - writes a private `0600` run manifest with provenance.

@@ -29,17 +29,82 @@ RESOURCE_TYPE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 # packages. They are outside the network-migration evaluation scope.
 BLOCKED_RESOURCE_TYPES = {
     "all",
-    "stack",
+    "asg",
+    "autoscaling",
     "ec2",
     "lambda",
-    "secretsmanager",
-    "autoscaling",
+    "secret",
+    "secrets",
+    "stack",
     "aws_instance",
     "aws_launch_configuration",
+    "aws_launch_template",
     "aws_lambda_function",
+    "aws_lambda_layer_version",
     "aws_secretsmanager_secret",
     "aws_secretsmanager_secret_version",
 }
+
+APPROVED_NETWORK_ALIASES = {
+    "cloudwan",
+    "igw",
+    "natgw",
+    "net",
+    "nfw",
+    "privatelink",
+    "ram",
+    "route53",
+    "security_group",
+    "subnet",
+    "tgw",
+    "vpc",
+    "vpclattice",
+    "wan",
+}
+
+APPROVED_NETWORK_EXACT_TYPES = {
+    "aws_customer_gateway",
+    "aws_default_internet_gateway",
+    "aws_default_network_acl",
+    "aws_default_route_table",
+    "aws_default_security_group",
+    "aws_default_subnet",
+    "aws_default_vpc",
+    "aws_egress_only_internet_gateway",
+    "aws_eip",
+    "aws_eip_association",
+    "aws_ec2_managed_prefix_list",
+    "aws_ec2_transit_gateway",
+    "aws_flow_log",
+    "aws_internet_gateway",
+    "aws_internet_gateway_attachment",
+    "aws_main_route_table_association",
+    "aws_nat_gateway",
+    "aws_network_acl",
+    "aws_network_interface",
+    "aws_route",
+    "aws_route_table",
+    "aws_route_table_association",
+    "aws_security_group",
+    "aws_security_group_rule",
+    "aws_subnet",
+    "aws_vpc",
+    "aws_vpc_dhcp_options",
+    "aws_vpn_connection",
+    "aws_vpn_gateway",
+}
+
+APPROVED_NETWORK_PREFIXES = (
+    "aws_dx_",
+    "aws_ec2_transit_gateway_",
+    "aws_networkfirewall_",
+    "aws_networkmanager_",
+    "aws_ram_",
+    "aws_route53_",
+    "aws_vpc_",
+    "aws_vpclattice_",
+    "aws_vpn_",
+)
 
 
 class SafetyError(ValueError):
@@ -70,6 +135,15 @@ def validate_resource_scope(resource_type: str) -> list[str]:
             raise SafetyError(f"Invalid resource type: {item}")
         if item in BLOCKED_RESOURCE_TYPES:
             raise SafetyError(f"Resource type is blocked in company-safe mode: {item}")
+        approved = (
+            item in APPROVED_NETWORK_ALIASES
+            or item in APPROVED_NETWORK_EXACT_TYPES
+            or item.startswith(APPROVED_NETWORK_PREFIXES)
+        )
+        if not approved:
+            raise SafetyError(
+                f"Resource type is not approved for the networking evaluation: {item}"
+            )
     return resource_types
 
 
@@ -124,9 +198,9 @@ def get_actual_account(profile: str) -> str:
     return str(payload.get("Account", ""))
 
 
-def get_upstream_commit(repo_root: Path) -> str:
+def get_git_commit(repo_root: Path, ref: str) -> str:
     result = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
+        ["git", "rev-parse", ref],
         cwd=repo_root,
         check=True,
         capture_output=True,
@@ -172,18 +246,24 @@ def main(argv: list[str] | None = None) -> int:
 
     timestamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     manifest_path = repo_root / "company-runs" / f"{timestamp}.json"
+    fork_commit = get_git_commit(repo_root, "HEAD")
+    try:
+        upstream_base_commit = get_git_commit(repo_root, "upstream/master")
+    except subprocess.CalledProcessError:
+        upstream_base_commit = get_git_commit(repo_root, "origin/master")
     write_run_manifest(
         manifest_path,
         {
             "account": actual_account,
             "command": command,
+            "fork_commit": fork_commit,
             "mode": "validation-only",
             "profile": args.profile,
             "region": args.region,
             "resource_id": args.resource_id,
             "resource_type": args.resource_type,
             "timestamp_utc": timestamp,
-            "upstream_commit": get_upstream_commit(repo_root),
+            "upstream_base_commit": upstream_base_commit,
         },
     )
 

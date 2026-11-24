@@ -56,10 +56,15 @@ class CompanySafeWrapperTests(unittest.TestCase):
 
     def test_sensitive_resource_types_are_rejected(self):
         for resource_type in (
+            "secret",
+            "secrets",
+            "asg",
             "aws_secretsmanager_secret_version",
             "aws_lambda_function",
+            "aws_lambda_layer_version",
             "aws_instance",
             "aws_launch_configuration",
+            "aws_launch_template",
         ):
             with self.subTest(resource_type=resource_type):
                 with self.assertRaisesRegex(SafetyError, "blocked"):
@@ -70,6 +75,40 @@ class CompanySafeWrapperTests(unittest.TestCase):
                         region="us-east-1",
                         resource_type=resource_type,
                     )
+
+    def test_mixed_scope_fails_if_any_type_is_not_approved_networking(self):
+        with self.assertRaisesRegex(SafetyError, "blocked|not approved"):
+            build_aws2tf_command(
+                python_path="python",
+                script_path="aws2tf.py",
+                profile="network-readonly",
+                region="us-east-1",
+                resource_type="aws_vpc,aws_lambda_layer_version",
+            )
+
+    def test_approved_networking_aliases_and_direct_types_are_accepted(self):
+        for resource_type in (
+            "vpc",
+            "net",
+            "tgw",
+            "ram",
+            "nfw",
+            "route53",
+            "aws_route_table",
+            "aws_ec2_transit_gateway",
+            "aws_ec2_transit_gateway_route_table",
+            "aws_networkfirewall_firewall",
+            "aws_ram_resource_share",
+        ):
+            with self.subTest(resource_type=resource_type):
+                command = build_aws2tf_command(
+                    python_path="python",
+                    script_path="aws2tf.py",
+                    profile="network-readonly",
+                    region="us-east-1",
+                    resource_type=resource_type,
+                )
+                self.assertIn(resource_type, command)
 
     def test_invalid_profile_and_region_are_rejected(self):
         with self.assertRaisesRegex(SafetyError, "Profile"):
@@ -110,10 +149,10 @@ class CompanySafeWrapperTests(unittest.TestCase):
         )
 
     @patch("company_safe.write_run_manifest")
-    @patch("company_safe.get_upstream_commit", return_value="abc123")
+    @patch("company_safe.get_git_commit", side_effect=["fork123", "upstream123"])
     @patch("company_safe.get_actual_account", return_value="111122223333")
     def test_dry_run_verifies_identity_without_running_upstream(
-        self, _account, _commit, write_manifest
+        self, _account, _commits, write_manifest
     ):
         with patch("company_safe.subprocess.run") as run:
             exit_code = main(
@@ -132,7 +171,34 @@ class CompanySafeWrapperTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         write_manifest.assert_called_once()
+        manifest_payload = write_manifest.call_args.args[1]
+        self.assertEqual(manifest_payload["fork_commit"], "fork123")
+        self.assertEqual(manifest_payload["upstream_base_commit"], "upstream123")
         run.assert_not_called()
+
+    @patch("company_safe.write_run_manifest")
+    @patch("company_safe.get_git_commit", side_effect=["fork123", "upstream123"])
+    @patch("company_safe.get_actual_account", return_value="111122223333")
+    def test_upstream_exit_code_is_propagated(
+        self, _account, _commits, _write_manifest
+    ):
+        with patch("company_safe.subprocess.run", return_value=Mock(returncode=7)) as run:
+            exit_code = main(
+                [
+                    "--expected-account",
+                    "111122223333",
+                    "--profile",
+                    "network-readonly",
+                    "--region",
+                    "us-east-1",
+                    "--type",
+                    "aws_vpc",
+                ]
+            )
+
+        self.assertEqual(exit_code, 7)
+        self.assertIn("--validate", run.call_args.args[0])
+        self.assertNotIn("--accept", run.call_args.args[0])
 
     @patch("company_safe.get_actual_account", return_value="999900001111")
     def test_main_stops_before_generation_on_account_mismatch(self, _account):
