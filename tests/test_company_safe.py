@@ -42,7 +42,7 @@ class CompanySafeWrapperTests(unittest.TestCase):
         self.assertEqual(command[command.index("--type") + 1], "aws_vpc")
         self.assertEqual(command[command.index("--id") + 1], "vpc-0123456789abcdef0")
 
-    def test_unrestricted_scan_is_rejected(self):
+    def test_implicit_unrestricted_scan_is_rejected(self):
         for resource_type in ("", "all", "stack"):
             with self.subTest(resource_type=resource_type):
                 with self.assertRaises(SafetyError):
@@ -53,6 +53,40 @@ class CompanySafeWrapperTests(unittest.TestCase):
                         region="us-east-1",
                         resource_type=resource_type,
                     )
+
+    def test_explicit_full_inventory_is_validation_only_and_unscoped(self):
+        command = build_aws2tf_command(
+            python_path="python",
+            script_path="aws2tf.py",
+            profile="inventory-readonly",
+            region="us-east-1",
+            full_inventory=True,
+        )
+
+        self.assertIn("--validate", command)
+        self.assertNotIn("--accept", command)
+        self.assertNotIn("--type", command)
+        self.assertNotIn("--id", command)
+
+    def test_full_inventory_cannot_be_combined_with_type_or_id(self):
+        with self.assertRaisesRegex(SafetyError, "cannot be combined"):
+            build_aws2tf_command(
+                python_path="python",
+                script_path="aws2tf.py",
+                profile="inventory-readonly",
+                region="us-east-1",
+                resource_type="aws_vpc",
+                full_inventory=True,
+            )
+        with self.assertRaisesRegex(SafetyError, "cannot be combined"):
+            build_aws2tf_command(
+                python_path="python",
+                script_path="aws2tf.py",
+                profile="inventory-readonly",
+                region="us-east-1",
+                resource_id="vpc-123",
+                full_inventory=True,
+            )
 
     def test_sensitive_resource_types_are_rejected(self):
         for resource_type in (
@@ -199,6 +233,33 @@ class CompanySafeWrapperTests(unittest.TestCase):
         self.assertEqual(exit_code, 7)
         self.assertIn("--validate", run.call_args.args[0])
         self.assertNotIn("--accept", run.call_args.args[0])
+
+    @patch("company_safe.write_run_manifest")
+    @patch("company_safe.get_git_commit", side_effect=["fork123", "upstream123"])
+    @patch("company_safe.get_actual_account", return_value="111122223333")
+    def test_full_inventory_runs_with_metadata_only_environment(
+        self, _account, _commits, write_manifest
+    ):
+        with patch("company_safe.subprocess.run", return_value=Mock(returncode=0)) as run:
+            exit_code = main(
+                [
+                    "--expected-account",
+                    "111122223333",
+                    "--profile",
+                    "inventory-readonly",
+                    "--region",
+                    "us-east-1",
+                    "--full-inventory",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        command = run.call_args.args[0]
+        self.assertNotIn("--type", command)
+        self.assertEqual(run.call_args.kwargs["env"]["AWS2TF_METADATA_ONLY"], "1")
+        payload = write_manifest.call_args.args[1]
+        self.assertEqual(payload["scope"], "full-inventory")
+        self.assertTrue(payload["metadata_only"])
 
     @patch("company_safe.get_actual_account", return_value="999900001111")
     def test_main_stops_before_generation_on_account_mismatch(self, _account):
