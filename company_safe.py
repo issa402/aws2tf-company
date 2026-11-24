@@ -19,7 +19,7 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 
 ACCOUNT_RE = re.compile(r"^\d{12}$")
@@ -152,14 +152,14 @@ def build_aws2tf_command(
     *,
     python_path: str,
     script_path: str,
-    profile: str,
+    profile: str | None,
     region: str,
     resource_type: str | None = None,
     resource_id: str | None = None,
     full_inventory: bool = False,
 ) -> list[str]:
     """Build an argument-list invocation that can never request upstream apply."""
-    if not profile or not re.fullmatch(r"[A-Za-z0-9_-]+", profile):
+    if profile is not None and not re.fullmatch(r"[A-Za-z0-9_-]+", profile):
         raise SafetyError("Profile must contain only letters, numbers, hyphens, or underscores")
     if not REGION_RE.fullmatch(region):
         raise SafetyError(f"Invalid AWS region: {region}")
@@ -172,11 +172,11 @@ def build_aws2tf_command(
         python_path,
         script_path,
         "--validate",
-        "--profile",
-        profile,
         "--region",
         region,
     ]
+    if profile is not None:
+        command.extend(["--profile", profile])
     if resource_type:
         command.extend(["--type", resource_type])
     if resource_id:
@@ -191,10 +191,25 @@ def write_run_manifest(path: Path, payload: dict[str, Any]) -> None:
     os.chmod(path, 0o600)
 
 
-def get_actual_account(profile: str) -> str:
+def validate_environment_credentials(environment: Mapping[str, str]) -> None:
+    """Fail before AWS calls when terminal-provided credentials are incomplete."""
+    access_key = environment.get("AWS_ACCESS_KEY_ID", "")
+    if not access_key:
+        raise SafetyError("AWS_ACCESS_KEY_ID is required for environment credentials")
+    if not environment.get("AWS_SECRET_ACCESS_KEY"):
+        raise SafetyError("AWS_SECRET_ACCESS_KEY is required for environment credentials")
+    if access_key.startswith("ASIA") and not environment.get("AWS_SESSION_TOKEN"):
+        raise SafetyError("AWS_SESSION_TOKEN is required for temporary ASIA credentials")
+
+
+def get_actual_account(profile: str | None) -> str:
     """Read the caller account through the AWS CLI without logging credentials."""
+    command = ["aws", "sts", "get-caller-identity"]
+    if profile is not None:
+        command.extend(["--profile", profile])
+    command.extend(["--output", "json"])
     result = subprocess.run(
-        ["aws", "sts", "get-caller-identity", "--profile", profile, "--output", "json"],
+        command,
         check=True,
         capture_output=True,
         text=True,
@@ -240,7 +255,13 @@ def get_worktree_provenance(repo_root: Path) -> dict[str, Any]:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--expected-account", required=True)
-    parser.add_argument("--profile", required=True)
+    credentials = parser.add_mutually_exclusive_group(required=True)
+    credentials.add_argument("--profile")
+    credentials.add_argument(
+        "--use-environment-credentials",
+        action="store_true",
+        help="Use AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY and optional AWS_SESSION_TOKEN",
+    )
     parser.add_argument("--region", required=True)
     scope = parser.add_mutually_exclusive_group(required=True)
     scope.add_argument("--type", dest="resource_type")
@@ -263,6 +284,8 @@ def main(argv: list[str] | None = None) -> int:
     repo_root = Path(__file__).resolve().parent
 
     try:
+        if args.use_environment_credentials:
+            validate_environment_credentials(os.environ)
         actual_account = validate_account(
             get_actual_account(args.profile), args.expected_account
         )
@@ -292,6 +315,7 @@ def main(argv: list[str] | None = None) -> int:
         {
             "account": actual_account,
             "command": command,
+            "credential_source": args.profile or "environment",
             "fork_commit": fork_commit,
             "mode": "validation-only",
             "payload_suppression": "best-effort",
