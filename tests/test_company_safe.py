@@ -12,6 +12,7 @@ from company_safe import (
     get_worktree_provenance,
     main,
     validate_account,
+    validate_environment_credentials,
     write_run_manifest,
 )
 
@@ -42,6 +43,42 @@ class CompanySafeWrapperTests(unittest.TestCase):
         self.assertNotIn("--accept", command)
         self.assertEqual(command[command.index("--type") + 1], "aws_vpc")
         self.assertEqual(command[command.index("--id") + 1], "vpc-0123456789abcdef0")
+
+    def test_environment_credentials_do_not_add_profile_argument(self):
+        command = build_aws2tf_command(
+            python_path="python",
+            script_path="aws2tf.py",
+            profile=None,
+            region="us-east-1",
+            full_inventory=True,
+        )
+
+        self.assertNotIn("--profile", command)
+        self.assertIn("--validate", command)
+
+    def test_environment_credentials_require_access_key_and_secret(self):
+        with self.assertRaisesRegex(SafetyError, "AWS_ACCESS_KEY_ID"):
+            validate_environment_credentials({})
+        with self.assertRaisesRegex(SafetyError, "AWS_SECRET_ACCESS_KEY"):
+            validate_environment_credentials({"AWS_ACCESS_KEY_ID": "AKIAEXAMPLE"})
+
+    def test_temporary_environment_credentials_require_session_token(self):
+        with self.assertRaisesRegex(SafetyError, "AWS_SESSION_TOKEN"):
+            validate_environment_credentials(
+                {
+                    "AWS_ACCESS_KEY_ID": "ASIAEXAMPLE",
+                    "AWS_SECRET_ACCESS_KEY": "secret",
+                }
+            )
+
+    def test_complete_environment_credentials_are_accepted(self):
+        validate_environment_credentials(
+            {
+                "AWS_ACCESS_KEY_ID": "ASIAEXAMPLE",
+                "AWS_SECRET_ACCESS_KEY": "secret",
+                "AWS_SESSION_TOKEN": "token",
+            }
+        )
 
     def test_implicit_unrestricted_scan_is_rejected(self):
         for resource_type in ("", "all", "stack"):
@@ -183,6 +220,18 @@ class CompanySafeWrapperTests(unittest.TestCase):
             ],
         )
 
+    @patch("company_safe.subprocess.run")
+    def test_get_actual_account_uses_environment_chain_without_profile(self, run):
+        run.return_value = Mock(stdout='{"Account":"111122223333"}')
+
+        account = get_actual_account(None)
+
+        self.assertEqual(account, "111122223333")
+        self.assertEqual(
+            run.call_args.args[0],
+            ["aws", "sts", "get-caller-identity", "--output", "json"],
+        )
+
     @patch("company_safe.write_run_manifest")
     @patch("company_safe.get_git_commit", side_effect=["fork123", "upstream123"])
     @patch(
@@ -278,6 +327,35 @@ class CompanySafeWrapperTests(unittest.TestCase):
         self.assertTrue(payload["selected_handler_payload_suppression"])
         self.assertTrue(payload["sensitive_provider_reads_possible"])
         self.assertTrue(payload["worktree_dirty"])
+
+    @patch("company_safe.write_run_manifest")
+    @patch("company_safe.get_git_commit", side_effect=["fork123", "upstream123"])
+    @patch(
+        "company_safe.get_worktree_provenance",
+        return_value={"worktree_dirty": False, "worktree_fingerprint_sha256": "abc"},
+    )
+    @patch("company_safe.get_actual_account", return_value="111122223333")
+    @patch("company_safe.validate_environment_credentials")
+    def test_main_accepts_terminal_environment_credentials(
+        self, validate_credentials, account, _provenance, _commits, write_manifest
+    ):
+        with patch("company_safe.subprocess.run", return_value=Mock(returncode=0)) as run:
+            exit_code = main(
+                [
+                    "--expected-account",
+                    "111122223333",
+                    "--use-environment-credentials",
+                    "--region",
+                    "us-east-1",
+                    "--full-inventory",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        validate_credentials.assert_called_once()
+        account.assert_called_once_with(None)
+        self.assertNotIn("--profile", run.call_args.args[0])
+        self.assertEqual(write_manifest.call_args.args[1]["credential_source"], "environment")
 
     @patch("company_safe.get_actual_account", return_value="999900001111")
     def test_main_stops_before_generation_on_account_mismatch(self, _account):
