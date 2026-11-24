@@ -77,13 +77,15 @@ not exist. When this happens again, inspect error-level diagnostics in
 | Python | 3.12+ | 3.12.3 — compatible |
 | AWS CLI | 2.31.4+ | 2.32.31 — compatible |
 | jq | 1.6+ | 1.7 — compatible |
-| Terraform | 1.12+ | installed Snap cannot start in this environment |
+| Terraform | 1.12+ | repo-local 1.12.0 checksum verified — compatible |
+| Terraform AWS provider | generated project default 6.53.0 | signed 6.53.0 fixture initialized and validated |
 | Python packages | minimum versions only | isolated `.venv`; exact evaluated versions in `requirements-company.lock` |
 
-Terraform validation has therefore **not** been proved on this machine. Fix or
-replace the local Terraform installation before any live pilot. Do not treat
-the Python unit tests as a substitute for `terraform validate` and a real
-read-only plan.
+The system Snap package cannot start in this environment, so the compatibility
+test used the checksum-verified binary under `.tools/terraform/1.12.0`. The
+synthetic VPC/subnet/route-table regression fixture passes `terraform validate`
+against the signed AWS provider 6.53.0. This proves local schema compatibility;
+it does not replace a scoped, read-only plan against the real account.
 
 ## Installation
 
@@ -206,7 +208,6 @@ stale and cannot reproduce every provider-computed value.
 
 ## Known work still required
 
-- Install a working Terraform 1.12+ binary and validate synthetic fixtures.
 - Add a general owner-account filter inside upstream's discovery boundary;
   the wrapper prevents apply but does not yet remove foreign-owned candidates.
 - Surface provider diagnostics from `plan1.json` directly before the dependency

@@ -20,6 +20,7 @@ test*
 !tests/**
 .venv/
 company-runs/
+.tools/
 *.new
 *.sav
 *.zip
@@ -31,6 +32,7 @@ flip-eks.sh
 .DS_Store
 *.json
 *.lock.hcl
+!tests/terraform-fixtures/**/.terraform.lock.hcl
 aws_*.tf
 tfplan
 **/tfplan
