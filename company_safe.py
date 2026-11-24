@@ -26,6 +26,22 @@ ACCOUNT_RE = re.compile(r"^\d{12}$")
 REGION_RE = re.compile(r"^[a-z]{2}-[a-z]+-\d{1,2}$")
 RESOURCE_TYPE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 EVALUATED_UPSTREAM_COMMIT = "0592fc501ba1a60d77c74409e2799414bbe15011"
+AWS_PROFILE_SELECTORS = ("AWS_PROFILE", "AWS_DEFAULT_PROFILE")
+AWS_DIRECT_CREDENTIAL_VARIABLES = (
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AWS_SECURITY_TOKEN",
+)
+AWS_ALTERNATE_CREDENTIAL_VARIABLES = (
+    "AWS_ROLE_ARN",
+    "AWS_ROLE_SESSION_NAME",
+    "AWS_WEB_IDENTITY_TOKEN_FILE",
+    "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+    "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+    "AWS_CONTAINER_AUTHORIZATION_TOKEN",
+    "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
+)
 
 # These paths can retrieve secret values, instance user data, or deployment
 # packages. They are outside the network-migration evaluation scope.
@@ -203,7 +219,9 @@ def validate_environment_credentials(environment: Mapping[str, str]) -> None:
         raise SafetyError("AWS_SESSION_TOKEN is required for temporary ASIA credentials")
 
 
-def get_actual_account(profile: str | None) -> str:
+def get_actual_account(
+    profile: str | None, environment: Mapping[str, str]
+) -> str:
     """Read the caller account through the AWS CLI without logging credentials."""
     command = ["aws", "sts", "get-caller-identity"]
     if profile is not None:
@@ -214,6 +232,7 @@ def get_actual_account(profile: str | None) -> str:
         check=True,
         capture_output=True,
         text=True,
+        env=dict(environment),
     )
     payload = json.loads(result.stdout)
     return str(payload.get("Account", ""))
@@ -251,9 +270,11 @@ def build_run_environment(
             "1" if use_environment_credentials else "0"
         ),
     }
-    if use_environment_credentials:
-        run_environment.pop("AWS_PROFILE", None)
-        run_environment.pop("AWS_DEFAULT_PROFILE", None)
+    for key in AWS_PROFILE_SELECTORS + AWS_ALTERNATE_CREDENTIAL_VARIABLES:
+        run_environment.pop(key, None)
+    if not use_environment_credentials:
+        for key in AWS_DIRECT_CREDENTIAL_VARIABLES:
+            run_environment.pop(key, None)
     return run_environment
 
 
@@ -310,12 +331,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     repo_root = Path(__file__).resolve().parent
+    run_environment = build_run_environment(
+        use_environment_credentials=args.use_environment_credentials,
+        environment=os.environ,
+    )
 
     try:
         if args.use_environment_credentials:
             validate_environment_credentials(os.environ)
         actual_account = validate_account(
-            get_actual_account(args.profile), args.expected_account
+            get_actual_account(args.profile, run_environment), args.expected_account
         )
         command = build_aws2tf_command(
             python_path=str(repo_root / ".venv" / "bin" / "python"),
@@ -368,10 +393,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         return 0
 
-    run_environment = build_run_environment(
-        use_environment_credentials=args.use_environment_credentials,
-        environment=os.environ,
-    )
     previous_umask = os.umask(0o077)
     try:
         return subprocess.run(

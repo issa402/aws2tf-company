@@ -404,7 +404,11 @@ class CompanySafeWrapperTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         validate_credentials.assert_called_once()
-        account.assert_called_once_with(None)
+        account.assert_called_once()
+        account_args = account.call_args.args
+        self.assertIsNone(account_args[0])
+        self.assertNotIn("AWS_PROFILE", account_args[1])
+        self.assertNotIn("AWS_DEFAULT_PROFILE", account_args[1])
         self.assertNotIn("--profile", run.call_args.args[0])
         self.assertEqual(
             run.call_args.kwargs["env"]["AWS2TF_USE_ENVIRONMENT_CREDENTIALS"], "1"
