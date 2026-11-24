@@ -440,6 +440,109 @@ Do not put secrets in tfvars. Use approved secret stores and data references.
 
 ## Migration sequence for each networking domain
 
+### Build the reviewed import-address mapping
+
+aws2tf's original import blocks point at its temporary flat addresses, such as:
+
+```hcl
+import {
+  to = aws_vpc.vpc-0123456789abcdef0
+  id = "vpc-0123456789abcdef0"
+}
+```
+
+After reorganizing that VPC into a module, its final address may instead be:
+
+```text
+module.hub_network.aws_vpc.this["hub"]
+```
+
+Terraform state identity is address-specific. The final import block must use
+the final module address; importing to the temporary flat address and then
+deleting that address would make Terraform think the module resource is new.
+
+Export all discovered aws2tf import blocks into a private review ledger:
+
+```bash
+.venv/bin/python company_imports.py export \
+  --generated-dir generated/tf-123456789012-us-east-1 \
+  --output /approved/private/path/network-import-map.csv
+```
+
+The CSV contains:
+
+```text
+source_file,resource_type,source_address,import_id,suggested_domain,target_address,decision,notes
+```
+
+The script suggests review domains such as `vpc-foundation`, `routing`,
+`transit`, `inspection`, `endpoints`, `dns`, and `ram-sharing`. A suggestion is
+not an ownership decision. Every row starts with:
+
+```text
+target_address = empty
+decision       = pending
+```
+
+For each row, inspect the organized networking code and choose one decision:
+
+| Decision | Meaning |
+| --- | --- |
+| `import` | This AWS object is owned by the new repository. Set its exact final module address. |
+| `external` | Another state, stack, account, or AWS service owns it. No import is generated. |
+| `ignore` | Reviewed and intentionally outside this migration. No import is generated. |
+| `pending` | Not decided. Generation stops until it is reviewed. |
+
+Example reviewed row:
+
+```csv
+import__aws_vpc__vpc-0123456789abcdef0.tf,aws_vpc,aws_vpc.vpc-0123456789abcdef0,vpc-0123456789abcdef0,vpc-foundation,"module.hub_network.aws_vpc.this[""hub""]",import,Production hub VPC
+```
+
+Generate final import blocks only after all rows have decisions:
+
+```bash
+.venv/bin/python company_imports.py generate \
+  --mapping /approved/private/path/network-import-map.csv \
+  --output /path/to/company-network-infra/imports.auto.tf
+```
+
+The generator fails closed on:
+
+- pending mappings;
+- missing or syntactically unsafe target addresses;
+- duplicate target addresses;
+- duplicate live AWS resource identities;
+- changed CSV columns; and
+- an empty approved import set.
+
+The CSV and generated import file are written with owner-only `0600`
+permissions. Keep the reconciliation ledger on approved encrypted storage.
+
+### What the import block actually does
+
+An import block does not continuously synchronize anything and does not create
+the AWS object. It tells Terraform:
+
+```text
+final Terraform address  <->  existing AWS resource ID
+```
+
+When an approved `terraform apply` processes the import block, Terraform records
+that relationship in the configured state backend. From then on:
+
+```text
+Terraform code <-> remote Terraform state <-> live AWS resource
+```
+
+The same plan can contain imports and ordinary changes. Do not apply merely
+because an import appears. Before the first adoption apply, confirm that every
+action is an expected import and that there are no unintended creates, updates,
+replacements, or destroys. After import, run `terraform plan` again and require
+no unexpected drift.
+
+### Domain-by-domain adoption steps
+
 1. Select one bounded domain, such as one VPC and its direct routing resources.
 2. Reconcile all related AWS IDs from the inventory.
 3. Identify resources owned by another account, CloudFormation, CDK, or an

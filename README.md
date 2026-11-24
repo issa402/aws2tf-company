@@ -7,7 +7,8 @@
 
 This branch includes a validation-only company wrapper, terminal environment
 credential support, sensitive-output warnings, regression tests, and a detailed
-migration workflow. Start with the
+migration workflow. It also includes `company_imports.py` to turn aws2tf's flat
+import evidence into a reviewed mapping for final module addresses. Start with the
 [company migration runbook](documentation/company-migration-runbook.md) before
 running it against a company account.
 

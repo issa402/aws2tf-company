@@ -216,7 +216,8 @@ class CompanyImportMappingTests(unittest.TestCase):
             generate_imports(mapping, output)
             rendered = output.read_text(encoding="utf-8")
 
-        self.assertNotIn(",=HYPERLINK", raw_csv)
+        self.assertIn("aws2tf-b64:", raw_csv)
+        self.assertNotIn("=HYPERLINK", raw_csv)
         self.assertIn('id = "=HYPERLINK', rendered)
 
     def test_private_outputs_reject_symlinks_and_use_owner_only_mode(self):
