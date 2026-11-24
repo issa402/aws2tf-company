@@ -176,8 +176,9 @@ def get_aws_instance(type, id, clfn, descfn, topkey, key, filterid):
               " clfn="+clfn+" descfn="+descfn+" topkey="+topkey+" key="+key+" filterid="+filterid)
     try:
         response = []
-        profile = None if context.environment_credentials else context.profile
-        session = boto3.Session(region_name=context.region,profile_name=profile)
+        session = boto3.Session(
+            region_name=context.region, profile_name=context.active_profile()
+        )
         client = session.client(clfn)
         #client = boto3.client(clfn)
         if id is None:

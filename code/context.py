@@ -144,6 +144,11 @@ acc="xxxxxxxxxxxx"
 region="xx-xxxx-x"
 regionl=0
 
+
+def active_profile():
+    """Return a named profile, or None to use boto3's environment chain."""
+    return None if environment_credentials else profile
+
 # Adaptive progress tracking
 terraform_plan_rate = 25.0  # Initial estimate: resources per second
 terraform_plan_samples = 0  # Number of samples collected

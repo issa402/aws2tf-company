@@ -13,8 +13,9 @@ def get_aws_s3_access_point(type, id, clfn, descfn, topkey, key, filterid):
         response = []
         my_region=context.region
         if context.sso:
-            profile = None if context.environment_credentials else context.profile
-            session = boto3.Session(region_name=my_region,profile_name=profile)
+            session = boto3.Session(
+                region_name=my_region, profile_name=context.active_profile()
+            )
             client = session.client(clfn)
         else:
             client = boto3.client(clfn)

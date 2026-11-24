@@ -474,7 +474,8 @@ def setup_environment_and_context(args):
         context.profile = os.environ['AWS_PROFILE']
     
     # Detect and validate AWS credentials
-    info = common.detect_aws_credentials(context.profile)
+    credential_profile = context.active_profile()
+    info = common.detect_aws_credentials(credential_profile)
     context.credtype = info['credential_type']
     context.sso = info['is_sso']
     log.info("Credentials Type = %s", context.credtype)
@@ -482,7 +483,7 @@ def setup_environment_and_context(args):
     
     if context.credtype == "unknown":
         log.error("could not find valid login creds")
-        common.print_credentials_info(context.profile)
+        common.print_credentials_info(credential_profile)
         timed_interrupt.stop_timer()
         exit()
     
