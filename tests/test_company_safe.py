@@ -7,8 +7,10 @@ from unittest.mock import Mock, patch
 import company_safe
 from company_safe import (
     SafetyError,
+    build_run_environment,
     build_aws2tf_command,
     get_actual_account,
+    get_upstream_base_commit,
     get_worktree_provenance,
     main,
     validate_account,
@@ -79,6 +81,23 @@ class CompanySafeWrapperTests(unittest.TestCase):
                 "AWS_SESSION_TOKEN": "token",
             }
         )
+
+    def test_environment_mode_removes_conflicting_profile_variables(self):
+        environment = build_run_environment(
+            use_environment_credentials=True,
+            environment={
+                "AWS_ACCESS_KEY_ID": "ASIAEXAMPLE",
+                "AWS_SECRET_ACCESS_KEY": "secret",
+                "AWS_SESSION_TOKEN": "token",
+                "AWS_PROFILE": "wrong-account",
+                "AWS_DEFAULT_PROFILE": "also-wrong",
+            },
+        )
+
+        self.assertNotIn("AWS_PROFILE", environment)
+        self.assertNotIn("AWS_DEFAULT_PROFILE", environment)
+        self.assertEqual(environment["AWS_ACCESS_KEY_ID"], "ASIAEXAMPLE")
+        self.assertEqual(environment["AWS2TF_USE_ENVIRONMENT_CREDENTIALS"], "1")
 
     def test_implicit_unrestricted_scan_is_rejected(self):
         for resource_type in ("", "all", "stack"):
@@ -404,6 +423,18 @@ class CompanySafeWrapperTests(unittest.TestCase):
 
         self.assertTrue(provenance["worktree_dirty"])
         self.assertEqual(len(provenance["worktree_fingerprint_sha256"]), 64)
+
+    @patch("company_safe.get_git_commit")
+    def test_upstream_commit_falls_back_in_fresh_private_clone(self, get_commit):
+        get_commit.side_effect = [
+            company_safe.subprocess.CalledProcessError(1, ["git"]),
+            company_safe.subprocess.CalledProcessError(1, ["git"]),
+            "0592fc501ba1a60d77c74409e2799414bbe15011",
+        ]
+
+        commit = get_upstream_base_commit(Path("/repo"))
+
+        self.assertEqual(commit, "0592fc501ba1a60d77c74409e2799414bbe15011")
 
 
 if __name__ == "__main__":
