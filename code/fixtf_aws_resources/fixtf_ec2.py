@@ -312,8 +312,24 @@ def aws_network_interface(t1, tt1, tt2, flag1, flag2):
 
 def aws_route_table(t1, tt1, tt2, flag1, flag2):
 	skip = 0
-	if "cidr_block" in tt1:
-		if tt2 == "": t1 = tt1 + " = null\n"
+	route_nullable_fields = {
+		"carrier_gateway_id",
+		"cidr_block",
+		"core_network_arn",
+		"destination_prefix_list_id",
+		"egress_only_gateway_id",
+		"gateway_id",
+		"ipv6_cidr_block",
+		"local_gateway_id",
+		"nat_gateway_id",
+		"network_interface_id",
+		"odb_network_arn",
+		"transit_gateway_id",
+		"vpc_endpoint_id",
+		"vpc_peering_connection_id",
+	}
+	if tt1 in route_nullable_fields and tt2 == "":
+		t1 = tt1 + " = null\n"
 	elif "nat_gateway_id" in tt1 and tt2.startswith("nat-"):
 		if context.natgwlist.get(tt2):
 			t1 = tt1 + " = aws_nat_gateway." + tt2 + ".id\n"
@@ -459,7 +475,7 @@ def aws_vpc(t1, tt1, tt2, skipipv6, flag2):
 	elif tt1 == "ipv6_cidr_block":
 		if skipipv6: skip = 1
 	elif tt1 == "ipv6_ipam_pool_id":
-		if skipipv6: skip = 1
+		if skipipv6 or tt2 == "null": skip = 1
 	elif tt1 == "ipv6_netmask_length":
 		if tt2 == "0": skip = 1
 	elif tt1 == "owner_id": skip = 1

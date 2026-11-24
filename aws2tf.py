@@ -1180,7 +1180,7 @@ def validate_and_import():
         log.info("\nValidation only - no files written")
         log.info("exit 012")
         timed_interrupt.stop_timer()
-        sys.exit(1)
+        sys.exit(0)
 
 
 def finalize_and_cleanup(args, starttime):

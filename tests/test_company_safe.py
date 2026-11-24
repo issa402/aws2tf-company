@@ -2,10 +2,14 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
+import company_safe
 from company_safe import (
     SafetyError,
     build_aws2tf_command,
+    get_actual_account,
+    main,
     validate_account,
     write_run_manifest,
 )
@@ -66,6 +70,86 @@ class CompanySafeWrapperTests(unittest.TestCase):
                         region="us-east-1",
                         resource_type=resource_type,
                     )
+
+    def test_invalid_profile_and_region_are_rejected(self):
+        with self.assertRaisesRegex(SafetyError, "Profile"):
+            build_aws2tf_command(
+                python_path="python",
+                script_path="aws2tf.py",
+                profile="bad;profile",
+                region="us-east-1",
+                resource_type="aws_vpc",
+            )
+        with self.assertRaisesRegex(SafetyError, "region"):
+            build_aws2tf_command(
+                python_path="python",
+                script_path="aws2tf.py",
+                profile="network-readonly",
+                region="not-a-region",
+                resource_type="aws_vpc",
+            )
+
+    @patch("company_safe.subprocess.run")
+    def test_get_actual_account_uses_argument_list(self, run):
+        run.return_value = Mock(stdout='{"Account":"111122223333"}')
+
+        account = get_actual_account("network-readonly")
+
+        self.assertEqual(account, "111122223333")
+        self.assertEqual(
+            run.call_args.args[0],
+            [
+                "aws",
+                "sts",
+                "get-caller-identity",
+                "--profile",
+                "network-readonly",
+                "--output",
+                "json",
+            ],
+        )
+
+    @patch("company_safe.write_run_manifest")
+    @patch("company_safe.get_upstream_commit", return_value="abc123")
+    @patch("company_safe.get_actual_account", return_value="111122223333")
+    def test_dry_run_verifies_identity_without_running_upstream(
+        self, _account, _commit, write_manifest
+    ):
+        with patch("company_safe.subprocess.run") as run:
+            exit_code = main(
+                [
+                    "--expected-account",
+                    "111122223333",
+                    "--profile",
+                    "network-readonly",
+                    "--region",
+                    "us-east-1",
+                    "--type",
+                    "aws_vpc",
+                    "--dry-run",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        write_manifest.assert_called_once()
+        run.assert_not_called()
+
+    @patch("company_safe.get_actual_account", return_value="999900001111")
+    def test_main_stops_before_generation_on_account_mismatch(self, _account):
+        exit_code = main(
+            [
+                "--expected-account",
+                "111122223333",
+                "--profile",
+                "network-readonly",
+                "--region",
+                "us-east-1",
+                "--type",
+                "aws_vpc",
+            ]
+        )
+
+        self.assertEqual(exit_code, 2)
 
     def test_manifest_is_private_and_contains_provenance(self):
         with tempfile.TemporaryDirectory() as temp_dir:
