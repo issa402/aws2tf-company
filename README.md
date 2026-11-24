@@ -3,6 +3,20 @@
 
 ----
 
+## Company full-inventory workflow
+
+This branch includes a validation-only company wrapper, terminal environment
+credential support, sensitive-output warnings, regression tests, and a detailed
+migration workflow. Start with the
+[company migration runbook](documentation/company-migration-runbook.md) before
+running it against a company account.
+
+The wrapper performs live discovery and Terraform planning but never applies
+the import plan. A full inventory can read sensitive configuration even with a
+read-only AWS identity, so generated output must be treated as sensitive.
+
+----
+
 ## Description
 
 aws2tf.py will import into Terraform existing AWS infrastructure, and produce the corresponding Terraform HCL files. 

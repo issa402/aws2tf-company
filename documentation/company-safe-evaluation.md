@@ -37,7 +37,8 @@ the same fixes.
 `company_safe.py` adds boundaries that upstream does not provide:
 
 - requires an expected 12-digit AWS account ID;
-- requires an explicit profile and Region;
+- requires either an explicit profile or terminal environment credentials, plus
+  an explicit Region;
 - requires either a scoped networking `--type` or an explicit
   `--full-inventory` choice;
 - verifies the active account through STS before starting generation;
@@ -173,8 +174,10 @@ The clone in this workspace has already completed those steps.
 
 ## Full-account inventory
 
-Use a company-approved read-only SSO permission set. Never paste credentials
-into a file or commit them.
+Use a company-approved read-only identity. Never paste credentials into a file,
+command argument, Git commit, or run manifest. See the
+[company migration runbook](company-migration-runbook.md) for secure profile and
+terminal environment setup.
 
 First verify the AWS identity and preview the exact command:
 
