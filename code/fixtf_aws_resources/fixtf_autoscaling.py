@@ -102,6 +102,8 @@ def aws_launch_configuration(t1,tt1,tt2,flag1,flag2):
 
 	elif tt1 == "user_data_base64": skip=1
 	elif tt1 == "user_data":
+		if context.metadata_only:
+			return 1,t1,flag1,flag2
 		#inid=flag2.split("__")[1]
 		client = boto3.client("autoscaling")
 		log.debug(str(flag2))

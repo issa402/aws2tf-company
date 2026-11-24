@@ -3,14 +3,15 @@
 
 The upstream CLI imports resources into local Terraform state during a normal
 run. This wrapper always supplies ``--validate`` so the discovery/generation
-pipeline stops before that import apply. It also requires an explicit account,
-region, profile, and resource scope.
+pipeline stops before that import apply. It requires an explicit account,
+region, profile, and either a scoped resource type or explicit full inventory.
 """
 
 from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import re
@@ -153,15 +154,19 @@ def build_aws2tf_command(
     script_path: str,
     profile: str,
     region: str,
-    resource_type: str,
+    resource_type: str | None = None,
     resource_id: str | None = None,
+    full_inventory: bool = False,
 ) -> list[str]:
     """Build an argument-list invocation that can never request upstream apply."""
     if not profile or not re.fullmatch(r"[A-Za-z0-9_-]+", profile):
         raise SafetyError("Profile must contain only letters, numbers, hyphens, or underscores")
     if not REGION_RE.fullmatch(region):
         raise SafetyError(f"Invalid AWS region: {region}")
-    validate_resource_scope(resource_type)
+    if full_inventory and (resource_type or resource_id):
+        raise SafetyError("--full-inventory cannot be combined with --type or --id")
+    if not full_inventory:
+        validate_resource_scope(resource_type or "")
 
     command = [
         python_path,
@@ -171,9 +176,9 @@ def build_aws2tf_command(
         profile,
         "--region",
         region,
-        "--type",
-        resource_type,
     ]
+    if resource_type:
+        command.extend(["--type", resource_type])
     if resource_id:
         command.extend(["--id", resource_id])
     return command
@@ -209,12 +214,41 @@ def get_git_commit(repo_root: Path, ref: str) -> str:
     return result.stdout.strip()
 
 
+def get_worktree_provenance(repo_root: Path) -> dict[str, Any]:
+    """Record whether the checkout differs from the named fork commit."""
+    status = subprocess.run(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    diff = subprocess.run(
+        ["git", "diff", "--binary", "HEAD"],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    fingerprint = hashlib.sha256((status + diff).encode("utf-8")).hexdigest()
+    return {
+        "worktree_dirty": bool(status),
+        "worktree_fingerprint_sha256": fingerprint,
+    }
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--expected-account", required=True)
     parser.add_argument("--profile", required=True)
     parser.add_argument("--region", required=True)
-    parser.add_argument("--type", required=True, dest="resource_type")
+    scope = parser.add_mutually_exclusive_group(required=True)
+    scope.add_argument("--type", dest="resource_type")
+    scope.add_argument(
+        "--full-inventory",
+        action="store_true",
+        help="Inventory every supported resource family without importing state",
+    )
     parser.add_argument("--id", dest="resource_id")
     parser.add_argument(
         "--dry-run",
@@ -239,6 +273,7 @@ def main(argv: list[str] | None = None) -> int:
             region=args.region,
             resource_type=args.resource_type,
             resource_id=args.resource_id,
+            full_inventory=args.full_inventory,
         )
     except (SafetyError, subprocess.CalledProcessError, json.JSONDecodeError) as exc:
         print(f"SAFETY STOP: {exc}", file=sys.stderr)
@@ -247,6 +282,7 @@ def main(argv: list[str] | None = None) -> int:
     timestamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     manifest_path = repo_root / "company-runs" / f"{timestamp}.json"
     fork_commit = get_git_commit(repo_root, "HEAD")
+    worktree_provenance = get_worktree_provenance(repo_root)
     try:
         upstream_base_commit = get_git_commit(repo_root, "upstream/master")
     except subprocess.CalledProcessError:
@@ -258,22 +294,39 @@ def main(argv: list[str] | None = None) -> int:
             "command": command,
             "fork_commit": fork_commit,
             "mode": "validation-only",
+            "payload_suppression": "best-effort",
+            "selected_handler_payload_suppression": True,
             "profile": args.profile,
             "region": args.region,
             "resource_id": args.resource_id,
             "resource_type": args.resource_type,
+            "scope": "full-inventory" if args.full_inventory else "scoped",
+            "sensitive_provider_reads_possible": True,
             "timestamp_utc": timestamp,
             "upstream_base_commit": upstream_base_commit,
+            **worktree_provenance,
         },
     )
 
     print(f"Verified account: {actual_account}")
     print(f"Run manifest: {manifest_path}")
     print(f"Command: {shlex.join(command)}")
+    if args.full_inventory:
+        print(
+            "WARNING: Full inventory refreshes complete resource configurations. "
+            "Read-only prevents mutation, not sensitive reads; treat all output as sensitive."
+        )
     if args.dry_run:
         return 0
 
-    return subprocess.run(command, cwd=repo_root, check=False).returncode
+    run_environment = {**os.environ, "AWS2TF_METADATA_ONLY": "1"}
+    previous_umask = os.umask(0o077)
+    try:
+        return subprocess.run(
+            command, cwd=repo_root, check=False, env=run_environment
+        ).returncode
+    finally:
+        os.umask(previous_umask)
 
 
 if __name__ == "__main__":

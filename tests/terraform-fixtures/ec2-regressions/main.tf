@@ -28,3 +28,13 @@ resource "aws_subnet" "fixture" {
   cidr_block        = "10.0.0.0/28"
   availability_zone = "us-east-1a"
 }
+
+resource "aws_ssm_parameter" "metadata_only" {
+  name  = "/aws2tf/metadata-only-fixture"
+  type  = "SecureString"
+  value = ""
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}

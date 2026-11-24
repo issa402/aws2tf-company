@@ -46,7 +46,8 @@ def get_aws_secretsmanager_secret(type, id, clfn, descfn, topkey, key, filterid)
                 return True
             j=response
             common.write_import(type,j[key],None)
-            common.add_dependancy("aws_secretsmanager_secret_version",j[key])
+            if not context.metadata_only:
+                common.add_dependancy("aws_secretsmanager_secret_version",j[key])
             try:
                 common.add_dependancy("aws_secretsmanager_secret_rotation",j[key])
             except KeyError:
@@ -95,6 +96,12 @@ def get_aws_secretsmanager_secret_version(type, id, clfn, descfn, topkey, key, f
         log.debug("--> In get_aws_secretsmanager_secret_version  doing " + type + ' with id ' + str(id) +
               " clfn="+clfn+" descfn="+descfn+" topkey="+topkey+" key="+key+" filterid="+filterid)
         
+    if context.metadata_only:
+        if id is not None:
+            context.rproc[type+"."+id] = True
+        log.debug("metadata-only: skipping secret version enumeration and values")
+        return True
+
     try:
         response = []
         client = boto3.client(clfn)

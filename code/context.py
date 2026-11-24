@@ -122,6 +122,7 @@ sso=False
 merge=False
 fast=False
 apionly=False
+metadata_only=os.environ.get("AWS2TF_METADATA_ONLY", "0") == "1"
 tracking_message="aws2tf: Starting, update messages every 20 seconds"
 cores=2
 cwd=""

@@ -67,6 +67,10 @@ def aws_ssm_parameter(t1,tt1,tt2,flag1,flag2):
 		context.ssmparamn=tt2
 		skip=1 
 	elif tt1 == "value":
+		if context.metadata_only:
+			context.ssmparamn=""
+			t1='value = ""\n lifecycle {\n   ignore_changes = [value]\n}\n'
+			return 0,t1,flag1,flag2
 		if context.ssmparamn != "":
 			client = boto3.client("ssm")
 			response = client.get_parameter(Name=context.ssmparamn, WithDecryption=True)
@@ -74,6 +78,8 @@ def aws_ssm_parameter(t1,tt1,tt2,flag1,flag2):
 			t1 = tt1 + " = " + hcl_string(vs) + "\n"
 			context.ssmparamn=""
 	elif tt1 == "insecure_value": 
+		if context.metadata_only:
+			return 1,t1,flag1,flag2
 		t1 ="lifecycle {\n" + "   ignore_changes = [value]\n" +  "}\n"
 		
 	return skip,t1,flag1,flag2

@@ -2,20 +2,22 @@
 
 ## Decision
 
-Use this checkout as an isolated discovery, candidate-HCL generation, and
-coverage-comparison tool. Do not make its local Terraform state the company's
-authoritative state, and do not copy generated files automatically into
-`us-platform-infra`.
+Use this checkout as an isolated full-account inventory, candidate-HCL
+generation, and coverage-comparison tool. Do not make its local Terraform
+state the company's authoritative state, and do not copy generated files
+automatically into the target infrastructure repository.
 
 The company-owned migration pipeline remains the source of truth:
 
-1. `inventory-network.sh` proves discovery completeness.
+1. A resource inventory proves discovery completeness.
 2. Ownership checks distinguish locally owned, RAM-visible, CloudFormation,
    and already-Terraform-managed resources.
 3. Reviewed HCL and import blocks land in the company stack.
 4. The company stack's central backend and approval workflow perform adoption.
 
-`aws2tf` is a second opinion and an accelerator inside that process.
+`aws2tf` is a second opinion and an accelerator inside that process. It can
+inventory a whole account, but it cannot infer the company's intended module
+boundaries, environment model, naming rules, or ownership decisions.
 
 ## Evaluated revision and local branch
 
@@ -35,14 +37,82 @@ the same fixes.
 `company_safe.py` adds boundaries that upstream does not provide:
 
 - requires an expected 12-digit AWS account ID;
-- requires an explicit profile, Region, and resource type;
+- requires an explicit profile and Region;
+- requires either a scoped networking `--type` or an explicit
+  `--full-inventory` choice;
 - verifies the active account through STS before starting generation;
-- rejects unrestricted `all`, `stack`, and broad `ec2` scans;
-- uses a positive networking allowlist, so aliases or direct resource types
-  outside the approved VPC/TGW/RAM/firewall/DNS/networking families fail closed;
+- retains a positive networking allowlist for small, scoped pilots;
+- allows every upstream-supported resource family in explicit full-inventory
+  mode;
 - always adds upstream `--validate`, stopping before Terraform import apply;
 - never adds `--accept`;
-- writes a private `0600` run manifest with provenance.
+- enables best-effort payload suppression in selected aws2tf post-processing
+  handlers, avoiding secondary secret-value lookups, SSM decryption calls, EC2
+  user-data lookups, Lambda package/layer downloads, and Glue script copies;
+- runs generation under a private `077` umask because the Terraform AWS
+  provider can still read sensitive attributes while refreshing resources and
+  plan JSON/binary plan artifacts must be treated as sensitive;
+- writes a private `0600` run manifest with fork/upstream commits, dirty-tree
+  status, and a worktree fingerprint.
+
+Full inventory includes Terraform resource containers for Secrets Manager, SSM,
+EC2, Lambda, Glue, and every other upstream-supported family. The suppression
+guards reduce avoidable secondary downloads, but they are not a hard
+no-sensitive-read boundary. Provider refresh and some AWS discovery APIs return
+complete configuration: examples include SSM parameter values, Cognito client
+secrets, launch-configuration user data, Glue connection properties, CloudFront
+function code, ECS task definitions, and CodeBuild environment variables.
+Generated directories, plan JSON, binary plans, logs, and any eventual state
+must therefore be handled as sensitive data even with read-only credentials.
+
+This is the unavoidable tradeoff for whole-account Terraform generation:
+restricting those resource families would make the inventory incomplete. If the
+company requires a strict metadata-only inventory, use AWS Config/Resource
+Explorer or a purpose-built ID/ARN discovery adapter first; aws2tf cannot both
+generate complete provider-backed HCL and guarantee that payload-bearing read
+APIs are never called.
+
+## What Terraform actually runs
+
+Yes: the safe wrapper still runs Terraform against the current live AWS
+account. Upstream performs one or more
+`terraform plan -generate-config-out=...` operations to read remote resources,
+generate candidate HCL, and detect dependencies. It then runs
+`terraform validate` on the cleaned configuration.
+
+No: the safe wrapper never reaches upstream's `wrapup()` path, where upstream
+normally applies the saved plan to import resources into local Terraform state.
+The wrapper always supplies `--validate`, and tests assert that `--accept` is
+never supplied. This is live read-only discovery and planning, not adoption.
+
+A clean plan proves that represented resources can be described consistently.
+It does not prove that every AWS resource was discovered. Completeness requires
+reconciling AWS inventory IDs to generated Terraform addresses.
+
+## Why the output will not look like the India repository
+
+The India networking repository is curated desired-state architecture: reusable
+modules, environment-specific `terraform.tfvars`, provider/backend wiring, and
+deployment workflows. `aws2tf` emits raw, resource-oriented candidate HCL and
+import blocks. It does not automatically transform an existing account into
+that repository design.
+
+Use the generated output as migration input:
+
+```text
+live AWS account
+  -> aws2tf full inventory + candidate HCL
+  -> reconcile every resource ID
+  -> classify by account/environment/domain
+  -> refactor into company modules and tfvars
+  -> import through the company's backend/workflow
+  -> require a zero-create/change/destroy adoption plan
+```
+
+For the India-style shape, the human design step maps generated resources into
+root composition (`main.tf`), reusable `modules/`, per-environment values under
+`envs/`, and the existing CI workflow. Copying generated files directly would
+produce a flat repository and preserve accidental current-state structure.
 
 ### Generator regressions
 
@@ -101,25 +171,39 @@ python3 -m venv .venv
 
 The clone in this workspace has already completed those steps.
 
-## First safe pilot
+## Full-account inventory
 
 Use a company-approved read-only SSO permission set. Never paste credentials
 into a file or commit them.
 
-First verify and preview the exact command:
+First verify the AWS identity and preview the exact command:
 
 ```bash
 .venv/bin/python company_safe.py \
   --expected-account 123456789012 \
   --profile NETWORK_READONLY \
   --region us-east-1 \
-  --type aws_vpc \
-  --id vpc-0123456789abcdef0 \
+  --full-inventory \
   --dry-run
 ```
 
-If the account, Region, type, and ID are correct, remove `--dry-run` to run the
+If the account and Region are correct, remove `--dry-run` to run the full
 validation-only generation pipeline:
+
+```bash
+.venv/bin/python company_safe.py \
+  --expected-account 123456789012 \
+  --profile NETWORK_READONLY \
+  --region us-east-1 \
+  --full-inventory
+```
+
+This intentionally does not import resources into local state. Review the
+generated HCL, `plan1.json`, `validate2.json` when present, owner identifiers,
+and the run manifest first. A large account can take substantial time and can
+surface `AccessDenied` for services excluded by the read-only permission set.
+
+For a smaller networking pilot, use the scoped form:
 
 ```bash
 .venv/bin/python company_safe.py \
@@ -129,9 +213,6 @@ validation-only generation pipeline:
   --type aws_vpc \
   --id vpc-0123456789abcdef0
 ```
-
-This intentionally does not import the resource into local state. Review the
-generated HCL, `plan1.json`, owner identifiers, and the run manifest first.
 
 ## Review gates for every generated resource
 
@@ -212,11 +293,12 @@ stale and cannot reproduce every provider-computed value.
   the wrapper prevents apply but does not yet remove foreign-owned candidates.
 - Surface provider diagnostics from `plan1.json` directly before the dependency
   loop emits its fallback message.
-- Disable local secret/user-data/package extraction inside upstream itself,
-  rather than relying only on wrapper scope blocking.
+- Expand metadata-only regression coverage whenever upstream adds a new handler
+  that downloads object bodies, credentials, code, or decrypted values.
 - Add the versioned offline inventory discovery adapter if offline generation
   becomes a supported company workflow.
 - Produce a hash-verified dependency lock before publishing the company fork.
 
-Do not run a full account scan or use write-capable credentials until these
-controls have been reviewed and approved.
+Use only a company-approved read-only role. Read-only permissions can still
+include sensitive read APIs, which is why metadata-only mode is enforced in
+code rather than relying on the IAM role name.

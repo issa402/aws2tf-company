@@ -7,7 +7,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "code"))
 
 import context
-from fixtf_aws_resources import fixtf_autoscaling, fixtf_ec2, fixtf_glue
+from fixtf_aws_resources import (
+    fixtf_autoscaling,
+    fixtf_ec2,
+    fixtf_glue,
+    fixtf_ssm,
+)
 from get_aws_resources import aws_lambda, aws_secretsmanager
 
 
@@ -69,6 +74,16 @@ class MetadataOnlyTests(unittest.TestCase):
             "",
         )
         self.assertTrue(result)
+        client.assert_not_called()
+
+    @patch("fixtf_aws_resources.fixtf_ssm.boto3.client")
+    def test_ssm_parameter_value_is_not_decrypted(self, client):
+        skip, rendered, _, _ = fixtf_ssm.aws_ssm_parameter(
+            "value = null\n", "value", "null", False, False
+        )
+        self.assertEqual(skip, 0)
+        self.assertIn('value = ""', rendered)
+        self.assertIn("ignore_changes = [value]", rendered)
         client.assert_not_called()
 
     @patch("fixtf_aws_resources.fixtf_glue.common.rc")

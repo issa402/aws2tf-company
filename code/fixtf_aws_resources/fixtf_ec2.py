@@ -169,6 +169,8 @@ def aws_instance(t1, tt1, tt2, flag1, flag2):
 				flag1 = False
 		
 		elif tt1 == "user_data":
+			if context.metadata_only:
+				return 1, t1, flag1, flag2
 			inid = flag2.split("__")[1]
 			session = boto3.Session(region_name=context.region, profile_name=context.profile)
 			client = session.client("ec2")

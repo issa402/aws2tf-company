@@ -37,6 +37,8 @@ def aws_secretsmanager_secret_version(t1,tt1,tt2,flag1,flag2):
 
 
     skip=0
+    if context.metadata_only and tt1 in ("secret_string", "secret_binary"):
+        return 1,t1,flag1,flag2
     ## need to get binary and string values
     try:
         if t1.startswith("resource"):

@@ -213,6 +213,9 @@ def get_aws_lambda_function_old(type, id, clfn, descfn, topkey, key, filterid):
 
 
 def get_lambda_code(fn):
+    if context.metadata_only:
+        log.debug("metadata-only: skipping Lambda function package download for %s", fn)
+        return True
     
     max_retries = 3
     for attempt in range(max_retries):
@@ -248,6 +251,9 @@ def get_lambda_code(fn):
 
 
 def get_lambdalayer_code(fn):
+    if context.metadata_only:
+        log.debug("metadata-only: skipping Lambda layer package download for %s", fn)
+        return True
     
     try:
         if fn.startswith("arn:"):

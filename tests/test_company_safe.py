@@ -9,6 +9,7 @@ from company_safe import (
     SafetyError,
     build_aws2tf_command,
     get_actual_account,
+    get_worktree_provenance,
     main,
     validate_account,
     write_run_manifest,
@@ -184,9 +185,13 @@ class CompanySafeWrapperTests(unittest.TestCase):
 
     @patch("company_safe.write_run_manifest")
     @patch("company_safe.get_git_commit", side_effect=["fork123", "upstream123"])
+    @patch(
+        "company_safe.get_worktree_provenance",
+        return_value={"worktree_dirty": False, "worktree_fingerprint_sha256": "abc"},
+    )
     @patch("company_safe.get_actual_account", return_value="111122223333")
     def test_dry_run_verifies_identity_without_running_upstream(
-        self, _account, _commits, write_manifest
+        self, _account, _provenance, _commits, write_manifest
     ):
         with patch("company_safe.subprocess.run") as run:
             exit_code = main(
@@ -212,9 +217,13 @@ class CompanySafeWrapperTests(unittest.TestCase):
 
     @patch("company_safe.write_run_manifest")
     @patch("company_safe.get_git_commit", side_effect=["fork123", "upstream123"])
+    @patch(
+        "company_safe.get_worktree_provenance",
+        return_value={"worktree_dirty": False, "worktree_fingerprint_sha256": "abc"},
+    )
     @patch("company_safe.get_actual_account", return_value="111122223333")
     def test_upstream_exit_code_is_propagated(
-        self, _account, _commits, _write_manifest
+        self, _account, _provenance, _commits, _write_manifest
     ):
         with patch("company_safe.subprocess.run", return_value=Mock(returncode=7)) as run:
             exit_code = main(
@@ -236,9 +245,14 @@ class CompanySafeWrapperTests(unittest.TestCase):
 
     @patch("company_safe.write_run_manifest")
     @patch("company_safe.get_git_commit", side_effect=["fork123", "upstream123"])
+    @patch(
+        "company_safe.get_worktree_provenance",
+        return_value={"worktree_dirty": True, "worktree_fingerprint_sha256": "abc"},
+    )
     @patch("company_safe.get_actual_account", return_value="111122223333")
+    @patch("company_safe.os.umask", side_effect=[0o022, 0o077])
     def test_full_inventory_runs_with_metadata_only_environment(
-        self, _account, _commits, write_manifest
+        self, umask, _account, _provenance, _commits, write_manifest
     ):
         with patch("company_safe.subprocess.run", return_value=Mock(returncode=0)) as run:
             exit_code = main(
@@ -257,9 +271,13 @@ class CompanySafeWrapperTests(unittest.TestCase):
         command = run.call_args.args[0]
         self.assertNotIn("--type", command)
         self.assertEqual(run.call_args.kwargs["env"]["AWS2TF_METADATA_ONLY"], "1")
+        self.assertEqual([call.args[0] for call in umask.call_args_list], [0o077, 0o022])
         payload = write_manifest.call_args.args[1]
         self.assertEqual(payload["scope"], "full-inventory")
-        self.assertTrue(payload["metadata_only"])
+        self.assertEqual(payload["payload_suppression"], "best-effort")
+        self.assertTrue(payload["selected_handler_payload_suppression"])
+        self.assertTrue(payload["sensitive_provider_reads_possible"])
+        self.assertTrue(payload["worktree_dirty"])
 
     @patch("company_safe.get_actual_account", return_value="999900001111")
     def test_main_stops_before_generation_on_account_mismatch(self, _account):
@@ -293,6 +311,18 @@ class CompanySafeWrapperTests(unittest.TestCase):
             payload = json.loads(manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(payload["upstream_commit"], "abc123")
             self.assertEqual(manifest_path.stat().st_mode & 0o777, 0o600)
+
+    @patch("company_safe.subprocess.run")
+    def test_dirty_worktree_is_fingerprinted(self, run):
+        run.side_effect = [
+            Mock(stdout=" M company_safe.py\n"),
+            Mock(stdout="diff --git a/company_safe.py b/company_safe.py\n"),
+        ]
+
+        provenance = get_worktree_provenance(Path("/repo"))
+
+        self.assertTrue(provenance["worktree_dirty"])
+        self.assertEqual(len(provenance["worktree_fingerprint_sha256"]), 64)
 
 
 if __name__ == "__main__":
